@@ -15,7 +15,9 @@ import "sync"
 // In order to achieve this, a go routine is started and waits for the wrapped
 // waitgroup to be done.
 type WaitGroupChannel struct {
-	sync.WaitGroup
+	wg      *sync.WaitGroup
+	mutex   *sync.Mutex
+	waiting bool
 	channel chan struct{}
 }
 
@@ -23,14 +25,49 @@ type WaitGroupChannel struct {
 // WaitGroupChannel.Add() like you would on sync.WaitGroup.
 func NewWaitGroupChannel() *WaitGroupChannel {
 	wgc := &WaitGroupChannel{
-		channel: make(chan struct{}),
+		wg:      &sync.WaitGroup{},
+		channel: make(chan struct{}, 1),
+		mutex:   &sync.Mutex{},
 	}
-	go func() {
-		wgc.Wait()
-		wgc.channel <- struct{}{}
-	}()
+	// Initially, the channel is non-nil, but closed, so you won't block when
+	// waiting and also no cause a nil pointer dereference.
+	close(wgc.channel)
 
+	go wgc.feedChannel()
 	return wgc
+}
+
+func (wgc *WaitGroupChannel) Add(delta int) {
+	wgc.mutex.Lock()
+	defer wgc.mutex.Unlock()
+
+	if delta > 0 && !wgc.waiting {
+		go wgc.feedChannel()
+	}
+
+	wgc.wg.Add(delta)
+}
+
+func (wgc *WaitGroupChannel) Done() {
+	wgc.wg.Done()
+}
+
+func (wgc *WaitGroupChannel) feedChannel() {
+	wgc.mutex.Lock()
+	wgc.channel = make(chan struct{}, 1)
+	wgc.waiting = true
+	wgc.mutex.Unlock()
+	wgc.wg.Wait()
+
+	wgc.mutex.Lock()
+	defer wgc.mutex.Unlock()
+
+	wgc.waiting = true
+	wgc.channel <- struct{}{}
+	// Close channel, so sthat follow up waits neither block, nor cause a nil
+	// pointer dereference. See initialisation.
+	close(wgc.channel)
+	wgc.waiting = false
 }
 
 // Channel returns the channel you can wait on. The channel will never be
@@ -39,5 +76,7 @@ func NewWaitGroupChannel() *WaitGroupChannel {
 // previous channel content has already been consumed or WaitGroup.Add has
 // never been called before, you'll wait forever.
 func (wgc *WaitGroupChannel) Channel() chan struct{} {
+	wgc.mutex.Lock()
+	defer wgc.mutex.Unlock()
 	return wgc.channel
 }
