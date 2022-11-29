@@ -15,25 +15,28 @@ func Test_MultiWait(t *testing.T) {
 		wg.Add(5)
 		go func() {
 			for i := 0; i < 5; i++ {
-				time.Sleep(100 * time.Second)
+				time.Sleep(100 * time.Millisecond)
 				wg.Done()
 			}
 		}()
 
 		<-wg.Channel()
+		t.Log("Returned 1")
 
 		wg.Add(5)
 		go func() {
 			for i := 0; i < 5; i++ {
-				time.Sleep(100 * time.Second)
+				time.Sleep(100 * time.Millisecond)
 				wg.Done()
 			}
 		}()
 
 		<-wg.Channel()
+		t.Log("Returned 2")
 
 		// Expected to return right away
 		<-wg.Channel()
+		t.Log("Returned 3")
 
 		done <- struct{}{}
 	}()

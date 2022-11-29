@@ -1,6 +1,8 @@
 package sync
 
-import "sync"
+import (
+	"sync"
+)
 
 // WaitGroupChannel is a wrapper around sync.WaitGroup, that allow you to
 // wait for its completion via a channel instead of calling WaitGroup.Wait().
@@ -33,7 +35,6 @@ func NewWaitGroupChannel() *WaitGroupChannel {
 	// waiting and also no cause a nil pointer dereference.
 	close(wgc.channel)
 
-	go wgc.feedChannel()
 	return wgc
 }
 
@@ -41,11 +42,10 @@ func (wgc *WaitGroupChannel) Add(delta int) {
 	wgc.mutex.Lock()
 	defer wgc.mutex.Unlock()
 
-	if delta > 0 && !wgc.waiting {
-		go wgc.feedChannel()
-	}
-
 	wgc.wg.Add(delta)
+	if delta > 0 && !wgc.waiting {
+		wgc.feedChannel()
+	}
 }
 
 func (wgc *WaitGroupChannel) Done() {
@@ -53,21 +53,21 @@ func (wgc *WaitGroupChannel) Done() {
 }
 
 func (wgc *WaitGroupChannel) feedChannel() {
-	wgc.mutex.Lock()
+	wgc.waiting = true
 	wgc.channel = make(chan struct{}, 1)
-	wgc.waiting = true
-	wgc.mutex.Unlock()
-	wgc.wg.Wait()
 
-	wgc.mutex.Lock()
-	defer wgc.mutex.Unlock()
+	go func() {
+		wgc.wg.Wait()
 
-	wgc.waiting = true
-	wgc.channel <- struct{}{}
-	// Close channel, so sthat follow up waits neither block, nor cause a nil
-	// pointer dereference. See initialisation.
-	close(wgc.channel)
-	wgc.waiting = false
+		wgc.mutex.Lock()
+		defer wgc.mutex.Unlock()
+
+		wgc.waiting = false
+		wgc.channel <- struct{}{}
+		// Close channel, so sthat follow up waits neither block, nor cause a nil
+		// pointer dereference. See initialisation.
+		close(wgc.channel)
+	}()
 }
 
 // Channel returns the channel you can wait on. The channel will never be
